@@ -1,0 +1,89 @@
+rules_version = '2';
+
+// ==================================================================
+//   KIRY'FOOD - Permisos de la base de datos (Firestore)
+//   Proyecto: negocio-14431
+//
+//   COMO SE PONE:
+//   1. console.firebase.google.com  ->  proyecto negocio-14431
+//   2. Menu izquierdo  ->  Firestore Database
+//   3. Arriba, pestana  ->  Reglas
+//   4. Borrar TODO lo que aparezca
+//   5. Pegar este texto completo
+//   6. Boton azul  ->  Publicar
+// ==================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --------------------------------------------------------------
+    //  1) QUIEN ES EL DUENO
+    //  Basta con una de las dos cosas:
+    //    a) que tu correo este escrito abajo en correosDueno()
+    //    b) que tu perfil tenga el campo  rol = admin
+    // --------------------------------------------------------------
+    //  CORREO DEL DUENO (ya esta puesto)
+    // --------------------------------------------------------------
+    function esDueno() {
+      return request.auth != null
+        && (
+             request.auth.token.email in ['yustincaly96@gmail.com']
+             || (
+                  exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+                  && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol == 'admin'
+                )
+           );
+    }
+
+    // --------------------------------------------------------------
+    //  2) PERFILES DE LOS CLIENTES  (coleccion: usuarios)
+    // --------------------------------------------------------------
+    match /usuarios/{uid} {
+
+      // Cada cliente solo ve su perfil. El dueno ve todos.
+      allow read: if request.auth != null
+        && (request.auth.uid == uid || esDueno());
+
+      // Solo puede crear SU perfil y no puede ponerse rol admin.
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && !('rol' in request.resource.data);
+
+      // Solo puede editar sus datos, nunca su rol.
+      allow update: if request.auth != null
+        && request.auth.uid == uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['rol']);
+
+      // Nadie borra perfiles.
+      allow delete: if false;
+    }
+
+    // --------------------------------------------------------------
+    //  3) PEDIDOS  (coleccion: pedidos)
+    // --------------------------------------------------------------
+    match /pedidos/{codigo} {
+
+      // Con el codigo exacto se puede ver ESE pedido.
+      allow get: if true;
+
+      // La lista de pedidos: el dueno todos, el cliente solo los suyos.
+      allow list: if request.auth != null
+        && (esDueno() || resource.data.uid == request.auth.uid);
+
+      // Cualquiera puede crear un pedido, pero completo,
+      // empezando en "recibido" y sin robar el de otra persona.
+      allow create: if request.resource.data.keys().hasAll(['codigo','items','total','estado','creado'])
+        && request.resource.data.estado == 'recibido'
+        && request.resource.data.total is number
+        && request.resource.data.total >= 0
+        && request.resource.data.items is list
+        && (
+             request.resource.data.uid == null
+             || (request.auth != null && request.resource.data.uid == request.auth.uid)
+           );
+
+      // Cambiar el estado o cancelar: SOLO EL DUENO.
+      allow update, delete: if esDueno();
+    }
+  }
+}
